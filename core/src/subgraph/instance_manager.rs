@@ -30,7 +30,6 @@ use std::time::{Duration, Instant};
 use tokio::task;
 
 const MINUTE: Duration = Duration::from_secs(60);
-const SYNC_STATUS_THRESHOLD: Duration = Duration::from_secs(60 * 3);
 
 const BUFFERED_BLOCK_STREAM_SIZE: usize = 100;
 const BUFFERED_FIREHOSE_STREAM_SIZE: usize = 1;
@@ -56,6 +55,14 @@ lazy_static! {
             .parse::<u64>()
             .map(Duration::from_secs)
             .expect("invalid GRAPH_SUBGRAPH_ERROR_RETRY_CEIL_SECS");
+
+    /// Threshold for when the sync status update of subgraphs will happen, in milliseconds.
+    pub static ref SYNC_STATUS_THRESHOLD: Duration =
+        std::env::var("GRAPH_SUBGRAPH_SYNC_STATUS_UPDATE_THRESHOLD_MILLIS")
+            .unwrap_or((MINUTE * 3).as_millis().to_string())
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .expect("invalid GRAPH_SUBGRAPH_SYNC_STATUS_UPDATE_THRESHOLD_MILLIS");
 }
 
 type SharedInstanceKeepAliveMap = Arc<RwLock<HashMap<DeploymentId, CancelGuard>>>;
@@ -730,7 +737,7 @@ where
                     if should_try_update_sync_status(
                         synced,
                         &mut sync_status_timer,
-                        SYNC_STATUS_THRESHOLD,
+                        *SYNC_STATUS_THRESHOLD,
                         // This is the new deployment head since the block just has been processed.
                         &block_ptr,
                         || chain_store.chain_head_ptr(),
@@ -1442,7 +1449,7 @@ fn test_should_try_update_sync_status() {
     assert!(!should_try_update_sync_status(
         true,
         &mut now,
-        SYNC_STATUS_THRESHOLD,
+        *SYNC_STATUS_THRESHOLD,
         &block_a,
         || unreachable!("Will not be called"),
     )
@@ -1453,29 +1460,29 @@ fn test_should_try_update_sync_status() {
     assert!(!should_try_update_sync_status(
         false,
         &mut now,
-        SYNC_STATUS_THRESHOLD,
+        *SYNC_STATUS_THRESHOLD,
         &block_a,
         || unreachable!("Will not be called"),
     )
     .unwrap());
 
     // When the threshold has passed but it's NOT the same block
-    let mut now = Instant::now() - SYNC_STATUS_THRESHOLD * 2;
+    let mut now = Instant::now() - *SYNC_STATUS_THRESHOLD * 2;
     assert!(!should_try_update_sync_status(
         false,
         &mut now,
-        SYNC_STATUS_THRESHOLD,
+        *SYNC_STATUS_THRESHOLD,
         &block_a,
         || Ok(Some(block_b.clone())),
     )
     .unwrap());
 
     // When the threshold has passed AND it's the same block
-    let mut now = Instant::now() - SYNC_STATUS_THRESHOLD * 2;
+    let mut now = Instant::now() - *SYNC_STATUS_THRESHOLD * 2;
     assert!(should_try_update_sync_status(
         false,
         &mut now,
-        SYNC_STATUS_THRESHOLD,
+        *SYNC_STATUS_THRESHOLD,
         &block_a,
         || Ok(Some(block_a.clone())),
     )
