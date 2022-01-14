@@ -194,7 +194,6 @@ where
         // point, and everything needs to go through the `store` we are
         // setting up here
 
-        // Here, we run QueryStore::query_store on every request
         let store = self.store.query_store(target.clone(), false).await?;
         let state = store.deployment_state().await?;
         let network = Some(store.network_name().to_string());
