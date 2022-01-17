@@ -601,9 +601,11 @@ async fn invalid_fragment() {
         .unwrap();
 
     match &res.to_result().unwrap_err()[0] {
-        QueryError::ExecutionError(QueryExecutionError::UnknownField(_, type_name, field_name)) => {
-            assert_eq!(type_name, "Legged");
-            assert_eq!(field_name, "name");
+        QueryError::ExecutionError(QueryExecutionError::ValidationError(_, error_message)) => {
+            assert_eq!(
+                error_message,
+                "Cannot query field \"name\" on type \"Legged\"."
+            );
         }
         e => panic!("error {} is not the expected one", e),
     }
