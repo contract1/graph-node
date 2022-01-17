@@ -260,11 +260,12 @@ jobs:
           set -o pipefail
           cd tests/integration-tests
           yarn install
+
+          cd data-source
           echo "Duplicating the subgraph subgraph to get different deployment hashes"
           sed "s/description: .*/description: Test Calls RPC/" subgraph.yaml > subgraph-rpc.yaml
           sed "s/description: .*/description: Test Calls firehose/" subgraph.yaml > subgraph-firehose.yaml
 
-          cd data-source
           yarn graph codegen
           yarn graph build  --ipfs http://localhost:5001 subgraph-rpc.yaml |tee buildout-rpc
           yarn graph build  --ipfs http://localhost:5001 subgraph-firehose.yaml |tee buildout-firehose
