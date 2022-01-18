@@ -113,6 +113,7 @@ pub trait Blockchain: Debug + Sized + Send + Sync + Unpin + 'static {
         deployment: DeploymentLocator,
         store: Arc<dyn WritableStore>,
         start_blocks: Vec<BlockNumber>,
+        subgraph_start_block: Option<BlockPtr>,
         filter: Arc<Self::TriggerFilter>,
         metrics: Arc<BlockStreamMetrics>,
         unified_api_version: UnifiedMappingApiVersion,
@@ -130,6 +131,19 @@ pub trait Blockchain: Debug + Sized + Send + Sync + Unpin + 'static {
     ) -> Result<Box<dyn BlockStream<Self>>, Error>;
 
     fn chain_store(&self) -> Arc<dyn ChainStore>;
+
+    /// Returns the closest final block to the block ptr received.
+    /// On probablitics chain like Ethereum, final is determined by
+    /// the confirmations threshold configured by the operator of
+    /// graph-node (usually through an enviornment variable).
+    ///
+    /// For example, on Ethereum with 200 confirmations, the final block pointer
+    /// for block #10100 (abcdef...) would be #10000 (<hash retrieved from the chain>).
+    async fn final_block_pointer_for(
+        &self,
+        logger: &Logger,
+        ptr: &Self::Block,
+    ) -> Result<BlockPtr, IngestorError>;
 
     async fn block_pointer_from_number(
         &self,

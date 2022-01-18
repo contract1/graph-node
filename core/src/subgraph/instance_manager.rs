@@ -458,6 +458,7 @@ async fn new_block_stream<C: Blockchain>(
     inputs: Arc<IndexingInputs<C>>,
     filter: C::TriggerFilter,
     block_stream_metrics: Arc<BlockStreamMetrics>,
+    subgraph_start_block: Option<BlockPtr>,
 ) -> Result<Box<dyn BlockStream<C>>, Error> {
     let chain = inputs.chain.cheap_clone();
     let is_firehose = chain.is_firehose_supported();
@@ -472,23 +473,20 @@ async fn new_block_stream<C: Blockchain>(
             inputs.deployment.clone(),
             inputs.store.clone(),
             inputs.start_blocks.clone(),
+            subgraph_start_block,
             Arc::new(filter.clone()),
             block_stream_metrics.clone(),
             inputs.unified_api_version.clone(),
         ),
-        false => {
-            let start_block = inputs.store.block_ptr();
-
-            chain.new_polling_block_stream(
-                inputs.deployment.clone(),
-                inputs.store.clone(),
-                inputs.start_blocks.clone(),
-                start_block,
-                Arc::new(filter.clone()),
-                block_stream_metrics.clone(),
-                inputs.unified_api_version.clone(),
-            )
-        }
+        false => chain.new_polling_block_stream(
+            inputs.deployment.clone(),
+            inputs.store.clone(),
+            inputs.start_blocks.clone(),
+            subgraph_start_block,
+            Arc::new(filter.clone()),
+            block_stream_metrics.clone(),
+            inputs.unified_api_version.clone(),
+        ),
     }
     .await?;
 
@@ -528,10 +526,16 @@ where
         let metrics = ctx.block_stream_metrics.clone();
         let filter = ctx.state.filter.clone();
         let stream_inputs = inputs.clone();
-        let mut block_stream = new_block_stream(stream_inputs, filter, metrics.cheap_clone())
-            .await?
-            .map_err(CancelableError::Error)
-            .cancelable(&block_stream_canceler, || Err(CancelableError::Cancel));
+        let subgraph_start_block = inputs.store.block_ptr();
+        let mut block_stream = new_block_stream(
+            stream_inputs,
+            filter,
+            metrics.cheap_clone(),
+            subgraph_start_block.clone(),
+        )
+        .await?
+        .map_err(CancelableError::Error)
+        .cancelable(&block_stream_canceler, || Err(CancelableError::Cancel));
 
         // Keep the stream's cancel guard around to be able to shut it down
         // when the subgraph deployment is unassigned
@@ -542,6 +546,7 @@ where
             .insert(inputs.deployment.id, block_stream_canceler);
 
         debug!(logger, "Starting block stream");
+        let mut first_block = true;
 
         // Process events from the stream as long as no restart is needed
         loop {
@@ -613,16 +618,84 @@ where
             };
 
             let block_ptr = block.ptr();
-
-            match inputs.stop_block.clone() {
-                Some(stop_block) => {
-                    if block_ptr.number > stop_block {
-                        info!(&logger, "stop block reached for subgraph");
-                        return Ok(());
-                    }
+            if let Some(ref stop_block) = inputs.stop_block {
+                if block_ptr.number > *stop_block {
+                    info!(&logger, "stop block reached for subgraph");
+                    return Ok(());
                 }
-                _ => {}
             }
+
+            // Sanity check for Firehose when starting from a subgraph block ptr directly. When
+            // this happens, we must ensure that Firehose first picked block directly follows the
+            // subgraph block ptr. So we check that Firehose first picked block's parent is
+            // equal to subgraph block ptr.
+            //
+            // This can happen for example when rewinding, unfailing a deterministic error or
+            // when switching from RPC to Firehose in Ethereum.
+            //
+            // What could go wrong is that the subgraph block ptr points to a forked block but
+            // since Firehose only accepts `block_number`, it could pick right away the canonical
+            // block of the longuest chain creating inconsistencies in the data (because it would
+            // not revert the forked the block).
+            //
+            // We should perform that only if subgraph actually started from a subgraph block ptr
+            // and no Firehose cursor was present. If a Firehose cursor is present, it's used to
+            // resume and as such, there is no need to perform this check (at the same time, it's
+            // not a bad check to make).
+            if first_block && inputs.chain.is_firehose_supported() && subgraph_start_block.is_some()
+            {
+                let previous_block_ptr = block.parent_ptr();
+                if previous_block_ptr.is_some() && previous_block_ptr != subgraph_start_block {
+                    let subgraph_start_block = subgraph_start_block.as_ref().unwrap();
+                    let revert_to = match inputs
+                        .chain
+                        .final_block_pointer_for(&logger, &block.block)
+                        .await
+                    {
+                        Ok(final_ptr) => final_ptr,
+                        Err(e) => {
+                            error!(
+                                &logger,
+                                "Could not fetch final block for subgraph start block";
+                                "subgraph_start_block" => subgraph_start_block,
+                                "error" => e.to_string(),
+                            );
+
+                            // Exit inner block stream consumption loop and go up to loop that restarts subgraph
+                            break;
+                        }
+                    };
+
+                    warn!(&logger,
+                        "Firehose selected first streamed block's parent should match subgraph start block, reverting to last know irreversible chain segment";
+                        "subgraph_start_block" => subgraph_start_block,
+                        "firehose_first_block" => &block_ptr,
+                        "firehose_first_block_parent" => previous_block_ptr.unwrap(),
+                        "reverting_to" => &revert_to,
+                    );
+
+                    // It's safe to have `None` for the `firehose_cursor` here, if we are at that point,
+                    // it's foremost because the subgraph started without a cursor, hence using None simply
+                    // results in the same state as before the revert.
+                    if let Err(e) = inputs
+                        .store
+                        .revert_block_operations(revert_to.clone(), None)
+                    {
+                        error!(
+                            &logger,
+                            "Could not revert to final block. Retrying";
+                            "reverting_to" => &revert_to,
+                            "error" => e.to_string(),
+                        );
+                    }
+
+                    // In all cases, we exit inner block stream consumption loop and go up to loop that restarts subgraph.
+                    // If the revert succeed, we reverted correctly and will resume from there. If the revert failed,
+                    // a log will be visible and we try the operation completely.
+                    break;
+                }
+            }
+            first_block = false;
 
             if block.trigger_count() > 0 {
                 subgraph_metrics

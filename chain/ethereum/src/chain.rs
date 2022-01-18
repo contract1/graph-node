@@ -189,6 +189,7 @@ impl Blockchain for Chain {
         deployment: DeploymentLocator,
         writable: Arc<dyn WritableStore>,
         start_blocks: Vec<BlockNumber>,
+        subgraph_start_block: Option<BlockPtr>,
         filter: Arc<Self::TriggerFilter>,
         metrics: Arc<BlockStreamMetrics>,
         unified_api_version: UnifiedMappingApiVersion,
@@ -221,6 +222,7 @@ impl Blockchain for Chain {
 
         Ok(Box::new(FirehoseBlockStream::new(
             firehose_endpoint,
+            subgraph_start_block,
             firehose_cursor,
             firehose_mapper,
             adapter,
@@ -308,6 +310,20 @@ impl Blockchain for Chain {
         eth_adapter
             .block_pointer_from_number(logger, number)
             .compat()
+            .await
+    }
+
+    async fn final_block_pointer_for(
+        &self,
+        logger: &Logger,
+        block: &BlockFinality,
+    ) -> Result<BlockPtr, IngestorError> {
+        let final_block_number = match block.number() {
+            x if x >= self.reorg_threshold => x - self.reorg_threshold,
+            _ => 0,
+        };
+
+        self.block_pointer_from_number(logger, final_block_number)
             .await
     }
 

@@ -111,6 +111,10 @@ impl<C: Blockchain> BlockWithTriggers<C> {
     pub fn ptr(&self) -> BlockPtr {
         self.block.ptr()
     }
+
+    pub fn parent_ptr(&self) -> Option<BlockPtr> {
+        self.block.parent_ptr()
+    }
 }
 
 #[async_trait]

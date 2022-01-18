@@ -21,6 +21,7 @@ where
 {
     pub fn new<F>(
         endpoint: Arc<FirehoseEndpoint>,
+        subgraph_start_block: Option<BlockPtr>,
         cursor: Option<String>,
         mapper: Arc<F>,
         adapter: Arc<C::TriggersAdapter>,
@@ -31,12 +32,21 @@ where
     where
         F: FirehoseMapper<C> + 'static,
     {
-        let start_block_num: BlockNumber = start_blocks
-            .into_iter()
-            .min()
-            // Firehose knows where to start the stream for the specific chain, 0 here means
-            // start at Genesis block.
-            .unwrap_or(0);
+        let start_block_num: BlockNumber = subgraph_start_block
+            .map(|ptr| {
+                // Firehose start block is inclusive while the subgraph_start_block is where the actual
+                // subgraph is currently at. So to process the actual next block, we must start one block
+                // further in the chain.
+                ptr.block_number() + 1 as BlockNumber
+            })
+            .unwrap_or_else(|| {
+                start_blocks
+                    .into_iter()
+                    .min()
+                    // Firehose knows where to start the stream for the specific chain, 0 here means
+                    // start at Genesis block.
+                    .unwrap_or(0)
+            });
 
         FirehoseBlockStream {
             stream: Box::pin(stream_blocks(
