@@ -11,7 +11,7 @@ use diesel::{expression::SqlLiteral, pg::PgConnection, sql_types::Numeric};
 use diesel::{
     prelude::{ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl},
     sql_query,
-    sql_types::{Nullable, Text},
+    sql_types::{Bool, Nullable, Text},
 };
 use graph::data::subgraph::{schema::SubgraphManifestEntity, SubgraphFeature};
 use graph::prelude::{
@@ -896,4 +896,40 @@ pub fn set_entity_count(
         .set(d::entity_count.eq(sql(&full_count_query)))
         .execute(conn)?;
     Ok(())
+}
+
+/// Helper type for checking if an index was created successfully.
+#[derive(Queryable, QueryableByName)]
+struct ManualIndexCheck {
+    #[sql_type = "Bool"]
+    is_valid: bool,
+}
+
+/// Checks in the database if a given index is valid.
+pub(crate) fn check_index_is_valid(
+    conn: &PgConnection,
+    schema_name: &str,
+    table_name: &str,
+    index_name: &str,
+) -> Result<bool, StoreError> {
+    let query = "
+        select
+            schemaname,
+            tablename,
+            indexname
+        from
+            pg_indexes
+        where
+            schemaname = $1
+            and tablename = $2
+            and indexname = $3";
+    let result = sql_query(query)
+        .bind::<Text, _>(schema_name)
+        .bind::<Text, _>(table_name)
+        .bind::<Text, _>(index_name)
+        .get_result::<ManualIndexCheck>(conn)
+        .optional()
+        .map_err::<StoreError, _>(Into::into)?
+        .map(|check| check.is_valid);
+    Ok(matches!(result, Some(true)))
 }
