@@ -1,3 +1,4 @@
+
 mod common;
 use anyhow::Context;
 use common::docker::{pull_images, DockerTestClient, TestContainerService};
@@ -5,6 +6,7 @@ use common::helpers::{
     basename, get_unique_ganache_counter, get_unique_postgres_counter, make_ganache_uri,
     make_ipfs_uri, make_postgres_uri, pretty_output, GraphNodePorts, MappedPorts,
 };
+
 use futures::StreamExt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,6 +77,7 @@ struct StdIO {
     stdout: Option<String>,
     stderr: Option<String>,
 }
+
 impl std::fmt::Display for StdIO {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(ref stdout) = self.stdout {
@@ -108,6 +111,7 @@ impl IntegrationTestResult {
         if self.test_command_results.success {
             return;
         }
+        
         let test_name = self.test_setup.test_name();
         println!("=============");
         println!("\nFailed test: {}", test_name);
@@ -128,6 +132,7 @@ impl IntegrationTestResult {
 /// The main test entrypoint
 #[tokio::test]
 async fn parallel_integration_tests() -> anyhow::Result<()> {
+    
     // use a environment variable for limiting the number of concurrent tests
     let n_parallel_tests: usize = std::env::var("N_CONCURRENT_TESTS")
         .ok()
@@ -300,8 +305,8 @@ async fn run_integration_test(
     let test_command_results = run_test_command(&test_setup).await?;
 
     // stop graph-node
-
     let graph_node_stdio = stop_graph_node(&mut graph_node_child_command).await?;
+    
     // stop ganache container
     ganache
         .stop()
@@ -346,6 +351,7 @@ async fn run_test_command(test_setup: &IntegrationTestSetup) -> anyhow::Result<T
         stderr: pretty_output(&output.stderr, &stderr_tag),
     })
 }
+
 async fn run_graph_node(test_setup: &IntegrationTestSetup) -> anyhow::Result<Child> {
     use std::process::Stdio;
 
